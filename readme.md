@@ -9,6 +9,20 @@ This project gives you a ready-to-use Proxmox monitoring stack:
 
 You do **not** need to import dashboards or create a datasource by hand.
 
+## How it connects
+
+```mermaid
+flowchart LR
+    P[Proxmox VE host or cluster] -->|OTLP/HTTP JSON<br/>port 4318| O[OpenTelemetry Collector]
+    O -->|OTLP/HTTP protobuf| V[(VictoriaMetrics)]
+    G[Grafana] -->|Prometheus queries<br/>port 8428| V
+    B[Your browser] -->|Dashboards<br/>port 3000| G
+```
+
+Proxmox pushes metrics into the Docker Compose stack. The Collector converts
+them into the format VictoriaMetrics accepts, VictoriaMetrics stores them, and
+Grafana queries VictoriaMetrics to display the dashboards.
+
 ![Proxmox overview dashboard](screenshots/dashboards/Proxmox-VE-Overview.png)
 
 ## Before you start

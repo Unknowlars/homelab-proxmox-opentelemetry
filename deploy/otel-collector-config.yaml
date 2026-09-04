@@ -1,0 +1,96 @@
+# OpenTelemetry Collector — Proxmox VE -> VictoriaMetrics bridge
+#
+# WHY THIS EXISTS
+# ---------------
+# Proxmox VE's built-in OpenTelemetry metric server serialises OTLP as *JSON*.
+# VictoriaMetrics' /opentelemetry/v1/metrics endpoint accepts *protobuf* only.
+# Pointing Proxmox straight at VictoriaMetrics therefore cannot work.
+#
+# This collector is the adapter. Its OTLP/HTTP receiver accepts JSON bodies
+# (Content-Type: application/json), and its OTLP/HTTP exporter re-emits the same
+# data as protobuf. No transformation is configured for that step -- it falls
+# out of the receiver/exporter encoding defaults.
+#
+# See docs/architecture.md.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        # Proxmox defaults to port 4318 and path /v1/metrics, which is also the
+        # collector's default OTLP/HTTP metrics path. Keep them aligned.
+        endpoint: 0.0.0.0:4318
+        # Proxmox's largest single push is bounded by its own otel-max-body-size
+        # (default 10MiB). Leave headroom so a burst is never refused.
+        max_request_body_size: 20971520
+
+processors:
+  # Guard against a slow/unreachable backend consuming unbounded memory.
+  memory_limiter:
+    check_interval: 5s
+    limit_percentage: 80
+    spike_limit_percentage: 20
+
+  # Proxmox emits the full QEMU blockstat struct for every virtual disk, and
+  # most of it is permanently zero on normal hardware: zoned-storage counters
+  # (zone_append_*), and the invalid_*/failed_* error counters. On a 4-guest
+  # node that is ~60% of all series for ~0% of the signal.
+  #
+  # The failed_* counters ARE genuinely interesting when they move, so if you
+  # would rather keep them, delete that alternative from the regex below.
+  filter/drop_blockstat_noise:
+    error_mode: ignore
+    metrics:
+      metric:
+        - 'IsMatch(name, "^proxmox_vm_blockstat_.*_(zone_append|invalid)_.*$")'
+
+  # Proxmox pushes every ~10s. Batching smooths that into fewer, larger writes.
+  batch:
+    timeout: 10s
+    send_batch_size: 8192
+    send_batch_max_size: 16384
+
+exporters:
+  otlp_http/victoriametrics:
+    # NOTE: metrics_endpoint is the FULL path, not a base URL. If you set
+    # `endpoint` instead, the collector appends /v1/metrics and you will get 404s.
+    metrics_endpoint: ${env:VM_OTLP_BASE_URL}/opentelemetry/v1/metrics
+    compression: gzip
+    # encoding defaults to "proto" -- this is the JSON -> protobuf conversion.
+    timeout: 30s
+    retry_on_failure:
+      enabled: true
+      initial_interval: 5s
+      max_interval: 30s
+      max_elapsed_time: 300s
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+
+service:
+  telemetry:
+    logs:
+      level: ${env:OTEL_LOG_LEVEL}
+    metrics:
+      # Self-observability on :8888. The "Collector" tab of the
+      # proxmox-storage-pipeline dashboard reads these; scrape this endpoint
+      # with Prometheus/vmagent to light it up.
+      level: detailed
+      readers:
+        - pull:
+            exporter:
+              prometheus:
+                host: 0.0.0.0
+                port: 8888
+
+  extensions: [health_check]
+
+  pipelines:
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, filter/drop_blockstat_noise, batch]
+      exporters: [otlp_http/victoriametrics]
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133

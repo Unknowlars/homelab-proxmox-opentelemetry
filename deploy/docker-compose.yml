@@ -1,0 +1,64 @@
+name: proxmox-otel
+
+services:
+  # ---------------------------------------------------------------------------
+  # The mandatory piece: converts Proxmox's OTLP/JSON into OTLP/protobuf.
+  # Without this, Proxmox cannot talk to VictoriaMetrics at all.
+  # ---------------------------------------------------------------------------
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.157.0
+    container_name: proxmox-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    volumes:
+      - ./otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    environment:
+      VM_OTLP_BASE_URL: ${VM_OTLP_BASE_URL:?set VM_OTLP_BASE_URL in .env}
+      OTEL_LOG_LEVEL: ${OTEL_LOG_LEVEL:-info}
+    mem_limit: ${OTEL_MEMORY_LIMIT:-512m}
+    ports:
+      # Proxmox must reach this port. Keep it firewalled to trusted nodes.
+      - "${OTEL_BIND_ADDRESS:-0.0.0.0}:${OTEL_HTTP_PORT:-4318}:4318"
+      - "${LOCAL_BIND_ADDRESS:-127.0.0.1}:8888:8888"   # self-telemetry
+      - "${LOCAL_BIND_ADDRESS:-127.0.0.1}:13133:13133"  # health check
+    networks: [proxmox-otel]
+
+  victoriametrics:
+    image: victoriametrics/victoria-metrics:v1.148.0
+    container_name: proxmox-victoriametrics
+    restart: unless-stopped
+    command:
+      - "--storageDataPath=/victoria-metrics-data"
+      - "--retentionPeriod=${VM_RETENTION:-1y}"
+      - "--dedup.minScrapeInterval=${VM_DEDUP:-30s}"
+      - "--promscrape.config=/etc/victoriametrics/scrape.yml"
+      - "--httpListenAddr=:8428"
+    volumes:
+      - vmdata:/victoria-metrics-data
+      - ./victoriametrics-scrape.yml:/etc/victoriametrics/scrape.yml:ro
+    ports:
+      - "${LOCAL_BIND_ADDRESS:-127.0.0.1}:${VM_PORT:-8428}:8428"
+    networks: [proxmox-otel]
+
+  grafana:
+    image: grafana/grafana:13.1.1
+    container_name: proxmox-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?set GRAFANA_PASSWORD in .env}
+      GF_USERS_DEFAULT_THEME: dark
+      VM_DATASOURCE_URL: ${VM_DATASOURCE_URL:-http://victoriametrics:8428}
+    volumes:
+      - grafanadata:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "${LOCAL_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+    networks: [proxmox-otel]
+
+volumes:
+  vmdata:
+  grafanadata:
+
+networks:
+  proxmox-otel:
+    driver: bridge

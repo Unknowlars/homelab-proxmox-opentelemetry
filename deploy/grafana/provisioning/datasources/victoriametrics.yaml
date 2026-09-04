@@ -1,0 +1,26 @@
+apiVersion: 1
+
+datasources:
+  - name: VictoriaMetrics
+    # This UID is what the generated dashboards resolve ${DS_PROMETHEUS} to on
+    # import. Keep it stable if you re-provision.
+    uid: proxmox-victoriametrics
+    type: prometheus
+    access: proxy
+    # Grafana expands $VARS in provisioning files. Defaults to the bundled
+    # VictoriaMetrics; set VM_DATASOURCE_URL to review against a real backend.
+    url: ${VM_DATASOURCE_URL}
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      # Must match --dedup.minScrapeInterval. This is what makes
+      # $__rate_interval resolve to a window wide enough for real data.
+      timeInterval: 30s
+      prometheusType: Prometheus
+      # NOTE: this is the Prometheus API compatibility version VictoriaMetrics
+      # advertises, not VictoriaMetrics' own version.
+      prometheusVersion: 2.24.0
+      # Keep certificate verification enabled. Trust an internal CA in the
+      # Grafana container instead of silently disabling TLS validation.
+      tlsSkipVerify: false
+    editable: false

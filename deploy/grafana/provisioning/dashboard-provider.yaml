@@ -1,0 +1,14 @@
+apiVersion: 1
+
+providers:
+  - name: Proxmox VE
+    orgId: 1
+    folder: Proxmox VE
+    folderUid: proxmox-ve
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards
+

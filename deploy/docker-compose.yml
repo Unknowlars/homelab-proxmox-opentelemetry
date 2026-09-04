@@ -22,6 +22,9 @@ services:
       - "${LOCAL_BIND_ADDRESS:-127.0.0.1}:8888:8888"   # self-telemetry
       - "${LOCAL_BIND_ADDRESS:-127.0.0.1}:13133:13133"  # health check
     networks: [proxmox-otel]
+    depends_on:
+      victoriametrics:
+        condition: service_started
 
   victoriametrics:
     image: victoriametrics/victoria-metrics:v1.148.0
@@ -45,15 +48,21 @@ services:
     container_name: proxmox-grafana
     restart: unless-stopped
     environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:?set GRAFANA_PASSWORD in .env}
       GF_USERS_DEFAULT_THEME: dark
       VM_DATASOURCE_URL: ${VM_DATASOURCE_URL:-http://victoriametrics:8428}
     volumes:
       - grafanadata:/var/lib/grafana
-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/provisioning/datasources/victoriametrics.yaml:/etc/grafana/provisioning/datasources/victoriametrics.yaml:ro
+      - ./grafana/provisioning/dashboard-provider.yaml:/etc/grafana/provisioning/dashboards/proxmox.yaml:ro
+      - ./grafana/provisioning/dashboards:/var/lib/grafana/dashboards:ro
     ports:
-      - "${LOCAL_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
+      - "${GRAFANA_BIND_ADDRESS:-127.0.0.1}:${GRAFANA_PORT:-3000}:3000"
     networks: [proxmox-otel]
+    depends_on:
+      victoriametrics:
+        condition: service_started
 
 volumes:
   vmdata:
